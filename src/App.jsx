@@ -10,17 +10,16 @@ import {
 } from 'recharts';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, addDoc, updateDoc, setDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, addDoc, updateDoc, setDoc, deleteDoc, doc, serverTimestamp, getDocs } from 'firebase/firestore';
 
 // --- CONFIGURAÇÃO DO FIREBASE ---
-// Quando for para produção, substitua este bloco pelo firebaseConfig que o Firebase gerar para você.
 const firebaseConfig = {
-  apiKey: "AIzaSyDXhyxCCAIl_Kl0ILeNyFk8FPyZViPcSV8",
-  authDomain: "agendamento-de-visitas-a84fa.firebaseapp.com",
-  projectId: "agendamento-de-visitas-a84fa",
-  storageBucket: "agendamento-de-visitas-a84fa.firebasestorage.app",
-  messagingSenderId: "201925024958",
-  appId: "1:201925024958:web:a65bb09f0d464463fe12ef"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -78,6 +77,7 @@ export default function App() {
   const [showEventModal, setShowEventModal] = useState(false);
   const [showBaptismModal, setShowBaptismModal] = useState(false);
   const [showSupperModal, setShowSupperModal] = useState(false);
+  const [showMigrationPanel, setShowMigrationPanel] = useState(false);
   
   const [editingData, setEditingData] = useState(null);
   const [actionConfirm, setActionConfirm] = useState(null);
@@ -156,7 +156,10 @@ export default function App() {
 
   // --- AÇÕES SEGURAS (CRUD Adm) ---
   const triggerEdit = (collectionName, item) => {
-    setActionConfirm({ action: 'edit', collection: collectionName, id: item.id, data: item });
+    setEditingData(item);
+    if (collectionName === 'events') setShowEventModal(true);
+    if (collectionName === 'baptisms') setShowBaptismModal(true);
+    if (collectionName === 'suppers') setShowSupperModal(true);
   };
 
   const triggerDelete = (collectionName, item) => {
@@ -181,11 +184,6 @@ export default function App() {
           showToast('Registro excluído com sucesso.');
         }
       } catch (err) { console.error(err); showToast('Erro ao excluir.'); }
-    } else if (action === 'edit') {
-      setEditingData(data);
-      if (col === 'events') setShowEventModal(true);
-      if (col === 'baptisms') setShowBaptismModal(true);
-      if (col === 'suppers') setShowSupperModal(true);
     }
     setActionConfirm(null);
     setDeleteScope('single');
@@ -872,15 +870,227 @@ export default function App() {
       } catch(err) { console.error(err); }
     };
 
-    const handleMigrateOldData = async () => {
-      if (!window.confirm("Atenção: Deseja iniciar a importação dos dados do sistema antigo?")) return;
+    const handleExportData = async () => {
+      try {
+        const exportData = {
+          events: events,
+          baptisms: baptisms,
+          suppers: suppers,
+          exportedAt: new Date().toISOString()
+        };
+        const dataStr = JSON.stringify(exportData, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `ccb-backup-${new Date().toISOString().split('T')[0]}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+        showToast('Backup exportado com sucesso!');
+      } catch (err) {
+        console.error("Erro ao exportar:", err);
+        showToast('Erro ao exportar dados.');
+      }
+    };
+
+    const handleUndoImport = async () => {
+      if (!window.confirm('Atenção: Isso vai apagar TODOS os registros que foram importados (com campo importedAt). Continuar?')) return;
       setIsMigrating(true);
       try {
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        showToast('Sucesso: Lógica de migração concluída!');
+        let deleted = 0;
+        const collections = ['events', 'baptisms', 'suppers'];
+        for (const col of collections) {
+          const snap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', col));
+          for (const docSnap of snap.docs) {
+            if (docSnap.data().importedAt) {
+              await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', col, docSnap.id));
+              deleted++;
+            }
+          }
+        }
+        showToast(`🗑️ ${deleted} registros importados foram removidos.`);
+      } catch (err) {
+        console.error(err);
+        showToast('Erro ao desfazer importação.');
+      } finally {
+        setIsMigrating(false);
+      }
+    };
+
+    const handleScanAndExportAllCollections = async () => {
+      setIsMigrating(true);
+      showToast('Varrendo coleções... aguarde.');
+      try {
+        // Lista de nomes candidatos para tentar ler
+        const candidates = [
+          'visitas', 'eventos', 'events', 'agendamentos', 'cultos', 'Artefatos',
+          'batismos', 'baptisms', 'batizado',
+          'santaCeia', 'santa-ceia', 'santaceia', 'SantaCeia', 'ceia', 'suppers',
+          'registros', 'historico', 'data', 'congregacao',
+        ];
+
+        const found = {};
+
+        for (const name of candidates) {
+          try {
+            const snap = await getDocs(collection(db, name));
+            if (!snap.empty) {
+              found[name] = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+            }
+          } catch (_) { /* ignora coleções sem permissão */ }
+        }
+
+        // Tenta ler subcoleções aninhadas de artifacts/default-app-id/public/data
+        const nestedPaths = [
+          { key: 'old_eventos',  path: ['artifacts', 'default-app-id', 'public', 'data', 'eventos'] },
+          { key: 'old_visitas',  path: ['artifacts', 'default-app-id', 'public', 'data', 'visitas'] },
+          { key: 'Artefatos_Eventos',  path: ['Artefatos', 'Default-App-ID', 'público', 'Dados', 'Eventos'] },
+          { key: 'Artefatos_Visitas',  path: ['Artefatos', 'Default-App-ID', 'público', 'Dados', 'Visitas'] },
+        ];
+        for (const { key, path } of nestedPaths) {
+          try {
+            const snap = await getDocs(collection(db, ...path));
+            if (!snap.empty) {
+              found[key] = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+            }
+          } catch (_) { /* sem permissão ou não existe */ }
+        }
+
+        if (Object.keys(found).length === 0) {
+          showToast('Nenhuma coleção conhecida encontrada.');
+          setIsMigrating(false);
+          return;
+        }
+
+        const exportData = { scannedAt: new Date().toISOString(), collections: found };
+        const dataStr = JSON.stringify(exportData, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `ccb-scan-${new Date().toISOString().split('T')[0]}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+
+        const names = Object.keys(found).join(', ');
+        const total = Object.values(found).reduce((s, arr) => s + arr.length, 0);
+        showToast(`Encontrado: ${total} registros em: ${names}`);
+      } catch (err) {
+        console.error(err);
+        showToast('Erro ao varrer coleções.');
+      } finally {
+        setIsMigrating(false);
+      }
+    };
+
+    const handleMigrateOldData = async () => {
+      if (!window.confirm("Atenção: Deseja iniciar a importação dos dados do sistema antigo? Será necessário ter o arquivo JSON preparado.")) return;
+      setIsMigrating(true);
+      try {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json';
+        input.onchange = async (e) => {
+          try {
+            const file = e.target.files[0];
+            const text = await file.text();
+            const rawData = JSON.parse(text);
+
+            // Suporta tanto ccb-backup (events/baptisms/suppers)
+            // quanto ccb-scan (collections.batismos / collections.visitas / etc.)
+            const isScan = !!rawData.collections;
+
+            // Junta eventos e visitas antigas em um único array
+            const rawEvents  = rawData.collections.old_eventos  || rawData.collections.Artefatos_Eventos  || rawData.collections.eventos  || rawData.collections.events  || rawData.collections.cultos || [];
+            const rawVisitas = rawData.collections.old_visitas  || rawData.collections.Artefatos_Visitas  || rawData.collections.visitas  || rawData.collections.agendamentos || [];
+            const eventsArr  = isScan ? [...rawEvents, ...rawVisitas] : (rawData.events || []);
+
+            const baptismsArr = isScan
+              ? (rawData.collections.batismos || rawData.collections.baptisms || rawData.collections.batizado || [])
+              : (rawData.baptisms || []);
+
+            const suppersArr  = isScan
+              ? (rawData.collections.santaCeia || rawData.collections.SantaCeia || rawData.collections['santa-ceia'] || rawData.collections.santaceia || rawData.collections.ceia || rawData.collections.suppers || [])
+              : (rawData.suppers || []);
+
+            // Tipos que são subtipos de Visita no banco antigo
+            const VISIT_SUBTYPES = ['Visita', 'Reunião Familiar', 'Evangelização', 'Resgate', 'Visita a Outra Igreja', 'Enfermo', 'Visita Comum'];
+
+            const mapTipo = (tipo) => {
+              if (!tipo) return 'Culto Normal';
+              if (VISIT_SUBTYPES.includes(tipo)) return 'Visita';
+              const t = tipo.toLowerCase();
+              if (t.includes('culto especial')) return 'Culto Especial';
+              if (t.includes('culto')) return 'Culto Normal';
+              return 'Culto Normal';
+            };
+
+            const mapSubTipo = (evt) => {
+              const tipo = evt.type || evt.tipo || '';
+              if (!VISIT_SUBTYPES.includes(tipo)) return null;
+              // Se for "Visita" genérico, usa "Visita Comum"; senão preserva o subtipo original
+              return tipo === 'Visita' ? 'Visita Comum' : tipo;
+            };
+
+            let imported = 0;
+
+            for (const evt of eventsArr) {
+              const tipo = mapTipo(evt.type || evt.tipo);
+              await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'events'), {
+                date: evt.date || evt.data || '',
+                time: evt.time || evt.horario || evt.hora || '19:30',
+                type: tipo,
+                subType: tipo === 'Visita' ? mapSubTipo(evt) : null,
+                name: evt.name || evt.nome || evt.nomeVisitado || evt.detalhe || 'Evento Importado',
+                observation: evt.observation || evt.observacao || '',
+                createdAt: serverTimestamp(),
+                importedAt: serverTimestamp()
+              });
+              imported++;
+            }
+
+            for (const bap of baptismsArr) {
+              // aceita: brothers/sisters (novo) ou irmaos/irmas (antigo)
+              const b = parseInt(bap.brothers ?? bap.irmaos) || 0;
+              const s = parseInt(bap.sisters  ?? bap.irmas)  || 0;
+              await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'baptisms'), {
+                date: bap.date || bap.data || '',
+                brothers: b,
+                sisters: s,
+                total: b + s,
+                createdAt: serverTimestamp(),
+                importedAt: serverTimestamp()
+              });
+              imported++;
+            }
+
+            for (const sup of suppersArr) {
+              const b = parseInt(sup.brothers ?? sup.irmaos) || 0;
+              const s = parseInt(sup.sisters  ?? sup.irmas)  || 0;
+              const year = sup.year || sup.ano || '';
+              await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'suppers'), {
+                year: year,
+                date: sup.date || sup.data || `${year}-01-01`,
+                brothers: b,
+                sisters: s,
+                total: b + s,
+                createdAt: serverTimestamp(),
+                importedAt: serverTimestamp()
+              });
+              imported++;
+            }
+
+            showToast(`✅ ${imported} registros importados com sucesso!`);
+          } catch (err) {
+            console.error("Erro ao processar arquivo:", err);
+            showToast('Erro ao ler o arquivo JSON.');
+          } finally {
+            setIsMigrating(false);
+          }
+        };
+        input.click();
       } catch (err) {
         console.error("Erro na migração:", err);
-      } finally {
         setIsMigrating(false);
       }
     };
@@ -904,7 +1114,7 @@ export default function App() {
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">Senha p/ visualizar Observações (Público)</label>
                 <input 
-                  type="text" 
+                  type="password" 
                   value={newPass} 
                   onChange={e => setNewPass(e.target.value)} 
                   placeholder="Ex: iraja2025" 
@@ -924,17 +1134,59 @@ export default function App() {
             </h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Migração de Sistema Antigo</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Exportar Backup Atual</label>
                 <p className="text-xs text-slate-500 mb-3">
-                  Importa e converte automaticamente os registros de visitas, batismos e santa ceia da versão anterior do banco de dados (Firebase).
+                  Baixa todos os dados atuais (eventos, batismos, santa ceia) em formato JSON para segurança ou transferência.
+                </p>
+              </div>
+              <button 
+                onClick={handleExportData}
+                className="w-full bg-slate-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-slate-700 transition-colors flex items-center justify-center"
+              >
+                📥 Exportar Dados Atuais (JSON)
+              </button>
+
+              <button 
+                onClick={handleScanAndExportAllCollections}
+                disabled={isMigrating}
+                className="w-full bg-violet-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-violet-700 transition-colors disabled:opacity-50 flex items-center justify-center"
+              >
+                {isMigrating ? 'Varrendo...' : '🔍 Varrer e Baixar Todas as Coleções'}
+              </button>
+
+              <div className="border-t pt-4 mt-4">
+                <label className="block text-sm font-medium text-slate-700 mb-1">Importar Dados Antigos</label>
+                <p className="text-xs text-slate-500 mb-3">
+                  Selecione um arquivo JSON com dados de banco anterior para importá-los automaticamente.
                 </p>
               </div>
               <button 
                 onClick={handleMigrateOldData} 
                 disabled={isMigrating}
-                className="w-full bg-emerald-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center"
+                className="w-full bg-emerald-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center mb-3"
               >
-                {isMigrating ? 'Migrando...' : 'Migrar Dados Antigos'}
+                {isMigrating ? 'Importando...' : '📤 Importar JSON'}
+              </button>
+
+              <button 
+                onClick={() => setShowMigrationPanel(true)} 
+                className="w-full bg-orange-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-orange-700 transition-colors flex items-center justify-center"
+              >
+                🔄 Painel de Migração Avançado
+              </button>
+
+              <div className="border-t pt-4 mt-4">
+                <label className="block text-sm font-medium text-slate-700 mb-1">Desfazer Importação</label>
+                <p className="text-xs text-slate-500 mb-3">
+                  Remove todos os registros importados (eventos, batismos e santa ceia com marca de importação).
+                </p>
+              </div>
+              <button 
+                onClick={handleUndoImport}
+                disabled={isMigrating}
+                className="w-full bg-red-600 text-white py-2 rounded-lg font-medium text-sm hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center"
+              >
+                {isMigrating ? 'Removendo...' : '🗑️ Desfazer Última Importação'}
               </button>
             </div>
           </div>
@@ -1026,7 +1278,7 @@ export default function App() {
         } else {
           payload.createdAt = serverTimestamp();
           if (isRecurring && recurrenceEnd) {
-             const groupId = Math.random().toString(36).substr(2, 9);
+             const groupId = Math.random().toString(36).substring(2, 11);
              const endD = new Date(recurrenceEnd + 'T23:59:59');
              
              if (recurrenceType === 'monthly_weekday') {
@@ -1228,8 +1480,8 @@ export default function App() {
           <form onSubmit={handleSubmit} className="p-6 space-y-4">
              <div><label className="block text-sm font-medium mb-1">Data</label><input type="date" required value={date} onChange={e => setDate(e.target.value)} className="w-full border-slate-300 rounded-lg p-2 border" /></div>
              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm font-medium mb-1">Irmãos</label><input type="number" required value={brothers} onChange={e => setBrothers(e.target.value)} className="w-full border-slate-300 rounded-lg p-2 border" /></div>
-                <div><label className="block text-sm font-medium mb-1">Irmãs</label><input type="number" required value={sisters} onChange={e => setSisters(e.target.value)} className="w-full border-slate-300 rounded-lg p-2 border" /></div>
+                <div><label className="block text-sm font-medium mb-1">Irmãos</label><input type="number" min="0" required value={brothers} onChange={e => setBrothers(e.target.value)} className="w-full border-slate-300 rounded-lg p-2 border" /></div>
+                <div><label className="block text-sm font-medium mb-1">Irmãs</label><input type="number" min="0" required value={sisters} onChange={e => setSisters(e.target.value)} className="w-full border-slate-300 rounded-lg p-2 border" /></div>
              </div>
              <div className="pt-4 flex justify-end"><button type="submit" className="px-4 py-2 bg-sky-600 text-white rounded-lg font-medium">Salvar</button></div>
           </form>
@@ -1278,11 +1530,183 @@ export default function App() {
                 <div><label className="block text-sm font-medium mb-1">Data</label><input type="date" required value={date} onChange={e => setDate(e.target.value)} className="w-full border-slate-300 rounded-lg p-2 border" /></div>
              </div>
              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm font-medium mb-1">Irmãos</label><input type="number" required value={brothers} onChange={e => setBrothers(e.target.value)} className="w-full border-slate-300 rounded-lg p-2 border" /></div>
-                <div><label className="block text-sm font-medium mb-1">Irmãs</label><input type="number" required value={sisters} onChange={e => setSisters(e.target.value)} className="w-full border-slate-300 rounded-lg p-2 border" /></div>
+                <div><label className="block text-sm font-medium mb-1">Irmãos</label><input type="number" min="0" required value={brothers} onChange={e => setBrothers(e.target.value)} className="w-full border-slate-300 rounded-lg p-2 border" /></div>
+                <div><label className="block text-sm font-medium mb-1">Irmãs</label><input type="number" min="0" required value={sisters} onChange={e => setSisters(e.target.value)} className="w-full border-slate-300 rounded-lg p-2 border" /></div>
              </div>
              <div className="pt-4 flex justify-end"><button type="submit" className="px-4 py-2 bg-sky-600 text-white rounded-lg font-medium">Salvar</button></div>
           </form>
+        </div>
+      </div>
+    );
+  };
+
+  const MigrationPanel = () => {
+    const [collectionPaths, setCollectionPaths] = useState({
+      eventsPath: 'visitas',
+      baptismsPath: 'batismos',
+      suppersPath: 'santa-ceia'
+    });
+    const [oldData, setOldData] = useState({ events: [], baptisms: [], suppers: [] });
+    const [selectedCollections, setSelectedCollections] = useState({ events: true, baptisms: true, suppers: true });
+    const [isLoading, setIsLoading] = useState(false);
+    const [isImporting, setIsImporting] = useState(false);
+
+    const handleLoadOldData = async () => {
+      setIsLoading(true);
+      try {
+        const data = { events: [], baptisms: [], suppers: [] };
+
+        if (selectedCollections.events && collectionPaths.eventsPath) {
+          try {
+            const eventsSnap = await getDocs(collection(db, collectionPaths.eventsPath));
+            data.events = eventsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          } catch (err) { console.error("Erro ao carregar eventos:", err); }
+        }
+
+        if (selectedCollections.baptisms && collectionPaths.baptismsPath) {
+          try {
+            const baptismsSnap = await getDocs(collection(db, collectionPaths.baptismsPath));
+            data.baptisms = baptismsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          } catch (err) { console.error("Erro ao carregar batismos:", err); }
+        }
+
+        if (selectedCollections.suppers && collectionPaths.suppersPath) {
+          try {
+            const suppersSnap = await getDocs(collection(db, collectionPaths.suppersPath));
+            data.suppers = suppersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          } catch (err) { console.error("Erro ao carregar santa ceia:", err); }
+        }
+
+        setOldData(data);
+        showToast(`Carregado: ${data.events.length} eventos, ${data.baptisms.length} batismos, ${data.suppers.length} santas ceias`);
+      } catch (err) {
+        console.error(err);
+        showToast('Erro ao carregar dados antigos.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    const handleImportAll = async () => {
+      if (!window.confirm(`Importar ${oldData.events.length + oldData.baptisms.length + oldData.suppers.length} registros?`)) return;
+      setIsImporting(true);
+      try {
+        let count = 0;
+
+        for (const evt of oldData.events) {
+          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'events'), {
+            date: evt.date,
+            time: evt.time || '19:30',
+            type: evt.type || 'Culto Normal',
+            subType: evt.subType,
+            name: evt.name || 'Evento Importado',
+            observation: evt.observation || '',
+            createdAt: serverTimestamp(),
+            importedFrom: collectionPaths.eventsPath
+          });
+          count++;
+        }
+
+        for (const bap of oldData.baptisms) {
+          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'baptisms'), {
+            date: bap.date,
+            brothers: parseInt(bap.brothers) || 0,
+            sisters: parseInt(bap.sisters) || 0,
+            total: (parseInt(bap.brothers) || 0) + (parseInt(bap.sisters) || 0),
+            createdAt: serverTimestamp(),
+            importedFrom: collectionPaths.baptismsPath
+          });
+          count++;
+        }
+
+        for (const sup of oldData.suppers) {
+          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'suppers'), {
+            year: sup.year,
+            date: sup.date,
+            brothers: parseInt(sup.brothers) || 0,
+            sisters: parseInt(sup.sisters) || 0,
+            total: (parseInt(sup.brothers) || 0) + (parseInt(sup.sisters) || 0),
+            createdAt: serverTimestamp(),
+            importedFrom: collectionPaths.suppersPath
+          });
+          count++;
+        }
+
+        showToast(`✅ ${count} registros importados com sucesso!`);
+        setShowMigrationPanel(false);
+      } catch (err) {
+        console.error(err);
+        showToast('Erro ao importar dados.');
+      } finally {
+        setIsImporting(false);
+      }
+    };
+
+    return (
+      <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:hidden">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden">
+          <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
+            <h3 className="text-lg font-bold text-slate-800 flex items-center"><Upload className="w-5 h-5 mr-2" /> Painel de Migração de Dados</h3>
+            <button onClick={() => setShowMigrationPanel(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
+          </div>
+          
+          <div className="p-6 space-y-6 max-h-[80vh] overflow-y-auto">
+            {/* Configuração de Caminhos */}
+            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+              <h4 className="text-sm font-bold text-blue-900 mb-3">1. Configure os caminhos das coleções antigas</h4>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-600">Caminho de Eventos/Visitas</label>
+                  <input type="text" value={collectionPaths.eventsPath} onChange={e => setCollectionPaths({...collectionPaths, eventsPath: e.target.value})} placeholder="Ex: visitas" className="w-full border border-blue-300 rounded p-2 mt-1 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-600">Caminho de Batismos</label>
+                  <input type="text" value={collectionPaths.baptismsPath} onChange={e => setCollectionPaths({...collectionPaths, baptismsPath: e.target.value})} placeholder="Ex: batismos" className="w-full border border-blue-300 rounded p-2 mt-1 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-600">Caminho de Santa Ceia</label>
+                  <input type="text" value={collectionPaths.suppersPath} onChange={e => setCollectionPaths({...collectionPaths, suppersPath: e.target.value})} placeholder="Ex: santa-ceia" className="w-full border border-blue-300 rounded p-2 mt-1 text-sm" />
+                </div>
+              </div>
+            </div>
+
+            {/* Seleção de Coleções */}
+            <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+              <h4 className="text-sm font-bold text-slate-800 mb-3">2. Escolha quais coleções importar</h4>
+              <div className="space-y-2">
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input type="checkbox" checked={selectedCollections.events} onChange={e => setSelectedCollections({...selectedCollections, events: e.target.checked})} className="rounded" />
+                  <span className="text-sm text-slate-700">📅 Eventos/Visitas ({oldData.events.length} registros)</span>
+                </label>
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input type="checkbox" checked={selectedCollections.baptisms} onChange={e => setSelectedCollections({...selectedCollections, baptisms: e.target.checked})} className="rounded" />
+                  <span className="text-sm text-slate-700">💧 Batismos ({oldData.baptisms.length} registros)</span>
+                </label>
+                <label className="flex items-center space-x-2 cursor-pointer">
+                  <input type="checkbox" checked={selectedCollections.suppers} onChange={e => setSelectedCollections({...selectedCollections, suppers: e.target.checked})} className="rounded" />
+                  <span className="text-sm text-slate-700">🍷 Santa Ceia ({oldData.suppers.length} registros)</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Botões de Ação */}
+            <div className="flex space-x-3">
+              <button 
+                onClick={handleLoadOldData}
+                disabled={isLoading}
+                className="flex-1 bg-sky-600 text-white py-2 rounded-lg font-medium hover:bg-sky-700 disabled:opacity-50"
+              >
+                {isLoading ? 'Carregando...' : '📖 Carregar Dados Antigos'}
+              </button>
+              <button 
+                onClick={handleImportAll}
+                disabled={isImporting || (oldData.events.length + oldData.baptisms.length + oldData.suppers.length === 0)}
+                className="flex-1 bg-emerald-600 text-white py-2 rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {isImporting ? 'Importando...' : '✅ Importar Tudo'}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1338,6 +1762,7 @@ export default function App() {
         )}
       </main>
 
+      {showMigrationPanel && <MigrationPanel />}
       {showLoginModal && <LoginModal />}
       {showEventModal && <EventModal />}
       {showBaptismModal && <BaptismModal />}
