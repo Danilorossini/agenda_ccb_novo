@@ -1,1 +1,30 @@
 @import "tailwindcss";
+
+/* Garante que modais cubram o documento inteiro dentro do iframe */
+html, body, #root {
+	position: relative;
+}
+
+/* Overlay de modal: cobre o documento inteiro (não só a viewport) quando em iframe */
+.modal-overlay {
+	position: fixed;
+	inset: 0;
+	top: 0;
+	left: 0;
+	width: 100%;
+	height: 100%;
+	z-index: 9999;
+	display: flex;
+	align-items: flex-start;
+	justify-content: center;
+	padding: 1rem;
+	background: rgba(15, 23, 42, 0.7);
+	overflow-y: auto;
+}
+
+.modal-overlay .modal-box {
+	margin-top: env(safe-area-inset-top, 16px);
+	margin-top: max(16px, env(safe-area-inset-top));
+	width: 100%;
+	position: relative;
+}

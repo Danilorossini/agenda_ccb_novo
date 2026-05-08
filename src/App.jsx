@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+﻿import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Calendar as CalendarIcon, PieChart as PieChartIcon, Users, Droplets, 
   Lock, LogOut, Plus, BookOpen, X, ChevronLeft, ChevronRight, CheckCircle2,
@@ -82,6 +82,33 @@ export default function App() {
   const [editingData, setEditingData] = useState(null);
   const [actionConfirm, setActionConfirm] = useState(null);
   const [deleteScope, setDeleteScope] = useState('single');
+  // --- ESTADOS DO CALENDÁRIO PÚBLICO (fora do PublicView para sobreviver re-renders do Firebase) ---
+  const [calCurrentDate, setCalCurrentDate] = useState(new Date());
+  const [calViewMode, setCalViewMode] = useState('month');
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [installPromptEvent, setInstallPromptEvent] = useState(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+
+  // --- AUTO-RESIZE PARA IFRAME (WordPress) ---
+  useEffect(() => {
+    const sendHeight = () => {
+      const h = document.documentElement.scrollHeight;
+      window.parent.postMessage({ type: 'ccbAgendaHeight', height: h }, '*');
+    };
+    sendHeight();
+    const observer = new ResizeObserver(sendHeight);
+    observer.observe(document.body);
+    return () => observer.disconnect();
+  }, []);
+
+    // --- ROLAR PARA O TOPO QUANDO MODAL ABRE (iframe no WordPress) ---
+    const anyModalOpen = showLoginModal || showEventModal || showBaptismModal || showSupperModal || !!selectedEvent || !!actionConfirm;
+    useEffect(() => {
+      if (anyModalOpen) {
+        window.scrollTo(0, 0);
+        window.parent.postMessage({ type: 'ccbScrollTop' }, '*');
+      }
+    }, [anyModalOpen]);
 
   // --- INICIALIZAÇÃO E AUTENTICAÇÃO ---
   useEffect(() => {
@@ -104,6 +131,47 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // --- PWA: BOTÃO DE INSTALAÇÃO ---
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(display-mode: standalone)');
+    const updateInstalledState = () => {
+      const standalone = mediaQuery.matches || window.navigator.standalone === true;
+      setIsInstalled(standalone);
+    };
+
+    const onBeforeInstallPrompt = (event) => {
+      event.preventDefault();
+      setInstallPromptEvent(event);
+    };
+
+    const onAppInstalled = () => {
+      setIsInstalled(true);
+      setInstallPromptEvent(null);
+      showToast('Aplicativo instalado com sucesso.');
+    };
+
+    updateInstalledState();
+    window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+    window.addEventListener('appinstalled', onAppInstalled);
+    mediaQuery.addEventListener?.('change', updateInstalledState);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', onAppInstalled);
+      mediaQuery.removeEventListener?.('change', updateInstalledState);
+    };
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!installPromptEvent) return;
+    installPromptEvent.prompt();
+    const choice = await installPromptEvent.userChoice;
+    if (choice?.outcome === 'accepted') {
+      showToast('Instalação iniciada.');
+    }
+    setInstallPromptEvent(null);
+  };
 
   // --- BUSCA DE DADOS ---
   useEffect(() => {
@@ -223,43 +291,82 @@ export default function App() {
     );
   };
 
-  const Navbar = () => (
-    <nav className="bg-white shadow-sm border-b border-slate-200 sticky top-0 z-40 print:hidden">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16">
-          <div className="flex items-center cursor-pointer" onClick={() => { setActiveTab('public_calendar'); }}>
-            <BookOpen className="h-8 w-8 text-sky-600 mr-2" />
-            <span className="font-bold text-xl text-slate-800 tracking-tight">CCB IRAJÁ</span>
-          </div>
-          <div className="flex items-center space-x-4">
-            {!isAdmin ? (
-              <button onClick={() => setShowLoginModal(true)} className="flex items-center text-slate-600 hover:text-sky-600 font-medium transition-colors">
-                <Lock className="h-4 w-4 mr-1" /> Acesso Restrito
-              </button>
-            ) : (
-              <>
-                <div className="hidden md:flex space-x-2 mr-4">
-                  <button onClick={() => setActiveTab('admin_dashboard')} className={`px-3 py-2 rounded-md text-sm font-medium ${activeTab === 'admin_dashboard' ? 'bg-sky-50 text-sky-700' : 'text-slate-600 hover:bg-slate-50'}`}>Dashboard</button>
-                  <button onClick={() => setActiveTab('admin_events')} className={`px-3 py-2 rounded-md text-sm font-medium ${activeTab === 'admin_events' ? 'bg-sky-50 text-sky-700' : 'text-slate-600 hover:bg-slate-50'}`}>Agenda</button>
-                  <button onClick={() => setActiveTab('admin_baptisms')} className={`px-3 py-2 rounded-md text-sm font-medium ${activeTab === 'admin_baptisms' ? 'bg-sky-50 text-sky-700' : 'text-slate-600 hover:bg-slate-50'}`}>Batismos</button>
-                  <button onClick={() => setActiveTab('admin_supper')} className={`px-3 py-2 rounded-md text-sm font-medium ${activeTab === 'admin_supper' ? 'bg-sky-50 text-sky-700' : 'text-slate-600 hover:bg-slate-50'}`}>Santa Ceia</button>
-                </div>
-                <button onClick={handleLogout} className="flex items-center text-red-500 hover:text-red-700 font-medium transition-colors">
-                  <LogOut className="h-4 w-4 mr-1" /> Sair
+  const Navbar = () => {
+    const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+    const adminNavItems = [
+      { tab: 'admin_dashboard', label: 'Dashboard' },
+      { tab: 'admin_events', label: 'Agenda' },
+      { tab: 'admin_baptisms', label: 'Batismos' },
+      { tab: 'admin_supper', label: 'Santa Ceia' },
+    ];
+    return (
+      <nav className="bg-white shadow-sm border-b border-slate-200 sticky top-0 z-40 print:hidden">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex justify-between h-16">
+            <div className="flex items-center cursor-pointer" onClick={() => { setActiveTab('public_calendar'); setMobileMenuOpen(false); }}>
+              <BookOpen className="h-8 w-8 text-sky-600 mr-2" />
+              <span className="font-bold text-xl text-slate-800 tracking-tight">CCB IRAJÁ</span>
+            </div>
+            <div className="flex items-center space-x-4">
+              {!isInstalled && installPromptEvent && (
+                <button
+                  onClick={handleInstallApp}
+                  className="hidden sm:flex items-center px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors"
+                >
+                  Instalar app
                 </button>
-              </>
-            )}
+              )}
+              {!isAdmin ? (
+                <button onClick={() => setShowLoginModal(true)} className="flex items-center text-slate-600 hover:text-sky-600 font-medium transition-colors">
+                  <Lock className="h-4 w-4 mr-1" /> Acesso Restrito
+                </button>
+              ) : (
+                <>
+                  {/* Menu desktop */}
+                  <div className="hidden md:flex space-x-2 mr-4">
+                    {adminNavItems.map(item => (
+                      <button key={item.tab} onClick={() => setActiveTab(item.tab)} className={`px-3 py-2 rounded-md text-sm font-medium ${activeTab === item.tab ? 'bg-sky-50 text-sky-700' : 'text-slate-600 hover:bg-slate-50'}`}>{item.label}</button>
+                    ))}
+                  </div>
+                  <button onClick={handleLogout} className="hidden md:flex items-center text-red-500 hover:text-red-700 font-medium transition-colors">
+                    <LogOut className="h-4 w-4 mr-1" /> Sair
+                  </button>
+                  {/* Botão hambúrguer mobile */}
+                  <button onClick={() => setMobileMenuOpen(o => !o)} className="md:hidden p-2 rounded-md text-slate-600 hover:bg-slate-100">
+                    <div className="w-5 h-0.5 bg-current mb-1"></div>
+                    <div className="w-5 h-0.5 bg-current mb-1"></div>
+                    <div className="w-5 h-0.5 bg-current"></div>
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
-      </div>
-    </nav>
-  );
+        {/* Menu mobile dropdown */}
+        {isAdmin && mobileMenuOpen && (
+          <div className="md:hidden bg-white border-t border-slate-200 shadow-lg">
+            <div className="px-4 py-3 space-y-1">
+              {adminNavItems.map(item => (
+                <button key={item.tab} onClick={() => { setActiveTab(item.tab); setMobileMenuOpen(false); }} className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium ${activeTab === item.tab ? 'bg-sky-50 text-sky-700' : 'text-slate-600 hover:bg-slate-50'}`}>{item.label}</button>
+              ))}
+              <button onClick={() => { handleLogout(); setMobileMenuOpen(false); }} className="w-full text-left px-4 py-3 rounded-lg text-sm font-medium text-red-500 hover:bg-red-50 flex items-center">
+                <LogOut className="h-4 w-4 mr-2" /> Sair
+              </button>
+            </div>
+          </div>
+        )}
+      </nav>
+    );
+  };
 
   // --- VISUALIZAÇÃO PÚBLICA ---
   const PublicView = () => {
-    const [currentDate, setCurrentDate] = useState(new Date());
-    const [viewMode, setViewMode] = useState('month');
-    const [selectedEvent, setSelectedEvent] = useState(null);
+    // usa estados do App para sobreviver re-renders do Firebase
+    const currentDate = calCurrentDate;
+    const setCurrentDate = setCalCurrentDate;
+    const viewMode = calViewMode;
+    const setViewMode = setCalViewMode;
+    // selectedEvent e setSelectedEvent já vêm do App via closure
 
     // Estado para o Desbloqueio da Observação
     const [obsPassInput, setObsPassInput] = useState('');
@@ -333,7 +440,7 @@ export default function App() {
         </div>
 
         {/* CALENDÁRIO */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden mb-12">
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 mb-12" style={{overflow:'visible'}}>
            <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 border-b border-slate-200 bg-slate-50 gap-4">
             <div className="flex bg-white p-1 rounded-lg border border-slate-200 shadow-sm">
               <button onClick={() => setViewMode('month')} className={`px-4 py-1.5 rounded-md text-sm font-semibold transition-all ${viewMode === 'month' ? 'bg-sky-100 text-sky-700' : 'text-slate-500'}`}>Mês</button>
@@ -354,13 +461,13 @@ export default function App() {
           </div>
           
           {viewMode === 'list' ? (
-            <div className="p-6 bg-slate-50 min-h-[300px]">
+            <div className="p-6 bg-slate-50 min-h-[300px] rounded-b-2xl">
               {displayEvents.length > 0 ? (
                 <div className="space-y-3 max-w-4xl mx-auto">
-                  {displayEvents.sort((a,b) => new Date(a.date) - new Date(b.date)).map(evt => {
+                  {[...displayEvents].sort((a,b) => new Date(a.date) - new Date(b.date)).map(evt => {
                     const style = getEventStyle(evt.type, evt.subType);
                     return (
-                      <div key={evt.id} onClick={() => setSelectedEvent(evt)} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between cursor-pointer hover:border-sky-300 transition-colors gap-4">
+                       <button key={evt.id} type="button" onClick={() => setSelectedEvent(evt)} className="w-full text-left bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between active:border-sky-300 transition-colors gap-4">
                         <div className="flex items-center space-x-4">
                           <div className="bg-slate-100 text-slate-700 font-bold px-4 py-2 rounded-lg text-center min-w-[80px]">
                             <div className="text-xl">{new Date(evt.date + 'T00:00:00').getDate()}</div>
@@ -378,7 +485,7 @@ export default function App() {
                           </div>
                         </div>
                         <ChevronRight className="text-slate-400 hidden sm:block" />
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -390,63 +497,74 @@ export default function App() {
               )}
             </div>
           ) : (
-            <div className="grid grid-cols-7 gap-px bg-slate-200">
-              {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(day => (
-                <div key={day} className="bg-slate-100 py-3 text-center text-xs font-bold text-slate-500 uppercase tracking-wider">{day}</div>
-              ))}
-              
+            <>
               {viewMode === 'month' ? (
-                <>
-                  {Array.from({ length: firstDay }).map((_, i) => <div key={`empty-${i}`} className="bg-white min-h-[120px] p-2"></div>)}
-                  {Array.from({ length: daysInMonth }).map((_, i) => {
-                    const day = i + 1;
-                    const dayEvents = displayEvents.filter(e => new Date(e.date + 'T00:00:00').getDate() === day);
-                    const isToday = new Date().getDate() === day && new Date().getMonth() === currentDate.getMonth() && new Date().getFullYear() === currentDate.getFullYear();
-
-                    return (
-                      <div key={day} className="bg-white min-h-[120px] p-2 border-t border-transparent hover:border-sky-200 transition-colors">
-                        <span className={`text-sm font-semibold mb-1 flex items-center justify-center w-7 h-7 rounded-full ${isToday ? 'bg-sky-600 text-white shadow-md' : 'text-slate-700'}`}>{day}</span>
-                        <div className="space-y-1.5">
-                          {dayEvents.map(evt => {
-                            const style = getEventStyle(evt.type, evt.subType);
-                            return (
-                              <div key={evt.id} onClick={() => setSelectedEvent(evt)} className={`text-xs p-1.5 rounded-md border truncate cursor-pointer hover:opacity-80 ${style.bg}`} title={evt.name}>
-                                <span className="font-bold mr-1">{evt.time}</span> {evt.type === 'Visita' ? evt.subType : evt.type}
-                              </div>
-                            );
-                          })}
+                <div className="overflow-hidden rounded-b-2xl">
+                  <div className="grid grid-cols-7 gap-px bg-slate-200">
+                    {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(day => (
+                      <div key={day} className="bg-slate-100 py-3 text-center text-xs font-bold text-slate-500 uppercase tracking-wider">{day}</div>
+                    ))}
+                    {Array.from({ length: firstDay }).map((_, i) => <div key={`empty-${i}`} className="bg-white min-h-[100px] p-2"></div>)}
+                    {Array.from({ length: daysInMonth }).map((_, i) => {
+                      const day = i + 1;
+                      const dayEvents = displayEvents.filter(e => new Date(e.date + 'T00:00:00').getDate() === day);
+                      const isToday = new Date().getDate() === day && new Date().getMonth() === currentDate.getMonth() && new Date().getFullYear() === currentDate.getFullYear();
+                      return (
+                        <div key={day} className="bg-white min-h-[100px] p-2 border-t border-transparent">
+                          <span className={`text-sm font-semibold mb-1 flex items-center justify-center w-7 h-7 rounded-full ${isToday ? 'bg-sky-600 text-white shadow-md' : 'text-slate-700'}`}>{day}</span>
+                          <div className="space-y-1">
+                            {dayEvents.map(evt => {
+                              const style = getEventStyle(evt.type, evt.subType);
+                              return (
+                                <button key={evt.id} type="button" onClick={() => setSelectedEvent(evt)} className={`w-full text-left text-xs py-1.5 px-1.5 rounded-md border truncate cursor-pointer active:opacity-70 ${style.bg}`} title={evt.name}>
+                                  <span className="font-bold mr-1">{evt.time}</span>{evt.type === 'Visita' ? evt.subType : evt.type}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                /* SEMANA - lista vertical (funciona em mobile e desktop) */
+                <div className="p-4 space-y-3 bg-slate-50 rounded-b-2xl">
+                  {weekDays.map((date, i) => {
+                    const dateStr = date.toISOString().split('T')[0];
+                    const dayEvents = events.filter(e => e.date === dateStr);
+                    const isToday = dateStr === new Date().toISOString().split('T')[0];
+                    return (
+                      <div key={i} className={`bg-white rounded-xl border ${isToday ? 'border-sky-300' : 'border-slate-200'} overflow-hidden`}>
+                        <div className={`flex items-center gap-3 px-4 py-2 ${isToday ? 'bg-sky-50' : 'bg-slate-50'} border-b border-slate-100`}>
+                          <span className={`text-lg font-bold ${isToday ? 'text-sky-700' : 'text-slate-700'}`}>{date.getDate()}</span>
+                          <span className="text-sm font-medium text-slate-500 capitalize">{['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'][date.getDay()]}, {monthNames[date.getMonth()].substring(0,3)}</span>
+                          {isToday && <span className="ml-auto text-xs font-bold text-sky-600 bg-sky-100 px-2 py-0.5 rounded-full">Hoje</span>}
+                        </div>
+                        {dayEvents.length > 0 ? (
+                          <div className="p-3 space-y-2">
+                            {dayEvents.map(evt => {
+                              const style = getEventStyle(evt.type, evt.subType);
+                              return (
+                                <button key={evt.id} type="button" onClick={() => setSelectedEvent(evt)} className={`w-full text-left p-3 rounded-lg border flex items-center gap-3 active:opacity-70 ${style.bg}`}>
+                                  <span className="font-bold text-sm whitespace-nowrap">{evt.time}</span>
+                                  <div className="min-w-0">
+                                    <div className="font-semibold text-sm truncate">{evt.name}</div>
+                                    <div className="text-xs opacity-70">{evt.type === 'Visita' ? `Visita: ${evt.subType}` : evt.type}</div>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="px-4 py-3 text-sm text-slate-400">Nenhum evento</div>
+                        )}
                       </div>
                     );
                   })}
-                </>
-              ) : (
-                <>
-                  {weekDays.map((date, i) => {
-                    const dayEvents = displayEvents.filter(e => new Date(e.date + 'T00:00:00').getDate() === date.getDate());
-                    const isToday = date.getDate() === new Date().getDate() && date.getMonth() === new Date().getMonth() && date.getFullYear() === new Date().getFullYear();
-                    return (
-                       <div key={i} className="bg-white min-h-[300px] p-3 border-t border-transparent hover:border-sky-200">
-                         <div className={`text-sm flex flex-col items-center py-2 mb-3 rounded-xl ${isToday ? 'bg-sky-100 text-sky-800 border-sky-200 shadow-sm' : 'text-slate-700 bg-slate-50 border-slate-100'} border`}>
-                           <span className="text-2xl font-bold">{date.getDate()}</span>
-                           <span className="text-xs uppercase font-semibold text-slate-500">{monthNames[date.getMonth()].substring(0,3)}</span>
-                         </div>
-                         <div className="space-y-2">
-                           {dayEvents.map(evt => {
-                              const style = getEventStyle(evt.type, evt.subType);
-                              return (
-                                <div key={evt.id} onClick={() => setSelectedEvent(evt)} className={`text-xs p-1.5 rounded-md border cursor-pointer hover:opacity-80 ${style.bg}`}>
-                                  <span className="font-bold block mb-0.5">{evt.time}</span> {evt.type === 'Visita' ? evt.subType : evt.type}
-                                </div>
-                              );
-                           })}
-                         </div>
-                       </div>
-                    )
-                  })}
-                </>
+                </div>
               )}
-            </div>
+            </>
           )}
         </div>
 
@@ -463,21 +581,47 @@ export default function App() {
                  <input type="date" value={visitEnd} onChange={e=>setVisitEnd(e.target.value)} className="border-slate-200 rounded px-2 py-1.5 focus:ring-emerald-500" title="Data Final" />
               </div>
             </div>
-            <div className="flex-1 min-h-[250px]">
+            <div className="flex-1 min-h-[250px] flex flex-col sm:flex-row items-center gap-4">
               {realizedVisitsData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={realizedVisitsData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={5} dataKey="value" label>
-                      {realizedVisitsData.map((entry, index) => {
-                        const style = getEventStyle('Visita', entry.name);
-                        return <Cell key={`cell-${index}`} fill={style.hex} />;
-                      })}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : <div className="h-full flex flex-col items-center justify-center text-slate-400 text-sm text-center px-4">Nenhuma visita concluída<br/>neste período.</div>}
+                <>
+                    <div className="w-full sm:w-1/2 h-[220px]" style={{touchAction:'pan-y'}}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie data={realizedVisitsData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={5} dataKey="value">
+                          {realizedVisitsData.map((entry, index) => {
+                            const style = getEventStyle('Visita', entry.name);
+                            return <Cell key={`cell-${index}`} fill={style.hex} />;
+                          })}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="w-full sm:w-1/2 space-y-2">
+                    {[...realizedVisitsData].sort((a,b) => b.value - a.value).map((entry, index) => {
+                      const style = getEventStyle('Visita', entry.name);
+                      const total = realizedVisitsData.reduce((s, d) => s + d.value, 0);
+                      const pct = total > 0 ? Math.round((entry.value / total) * 100) : 0;
+                      return (
+                        <div key={index} className="flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: style.hex }}></span>
+                            <span className="text-slate-600 truncate text-xs">{entry.name}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 flex-shrink-0 ml-2">
+                            <span className="font-bold text-slate-800">{entry.value}</span>
+                            <span className="text-slate-400 text-xs">({pct}%)</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div className="border-t border-slate-100 pt-2 flex items-center justify-between text-sm font-bold text-slate-700">
+                      <span>Total</span>
+                      <span>{realizedVisitsData.reduce((s, d) => s + d.value, 0)}</span>
+                    </div>
+                  </div>
+                </>
+              ) : <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 text-sm text-center px-4">Nenhuma visita concluída<br/>neste período.</div>}
             </div>
           </div>
 
@@ -494,7 +638,8 @@ export default function App() {
             </div>
             <div className="flex-1 min-h-[250px]">
               {baptismsPieData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
+                 <div style={{touchAction:'pan-y'}} className="h-full">
+                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={baptismsPieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={5} dataKey="value" label>
                       <Cell fill="#0ea5e9" /> {/* Irmãos */}
@@ -504,7 +649,8 @@ export default function App() {
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>
-              ) : <div className="h-full flex items-center justify-center text-slate-400 text-sm">Nenhum batismo registrado.</div>}
+                  </div>
+                ) : <div className="h-full flex items-center justify-center text-slate-400 text-sm">Nenhum batismo registrado.</div>}
             </div>
           </div>
 
@@ -544,8 +690,9 @@ export default function App() {
 
         {/* Modal de Detalhe Publico */}
         {selectedEvent && (
-          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="modal-overlay">
+              <div className="modal-box max-w-sm">
+              <div className="bg-white rounded-2xl shadow-xl w-full overflow-hidden">
               <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-sky-50">
                 <h3 className="text-lg font-bold text-slate-800 flex items-center"><Info className="w-5 h-5 mr-2 text-sky-600" /> Detalhes</h3>
                 <button onClick={() => setSelectedEvent(null)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
@@ -607,6 +754,7 @@ export default function App() {
                 <button onClick={() => setSelectedEvent(null)} className="bg-sky-600 text-white px-5 py-2 rounded-lg font-medium shadow-sm hover:bg-sky-700">Fechar</button>
               </div>
             </div>
+              </div>
           </div>
         )}
       </div>
@@ -674,7 +822,8 @@ export default function App() {
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden print:hidden">
-          <table className="min-w-full divide-y divide-slate-200">
+          <div className="overflow-x-auto">
+          <table className="min-w-[600px] w-full divide-y divide-slate-200">
             <thead className="bg-slate-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
@@ -729,6 +878,7 @@ export default function App() {
               {filtered.length === 0 && <tr><td colSpan="4" className="px-6 py-8 text-center text-slate-500">Nenhum evento corresponde aos filtros.</td></tr>}
             </tbody>
           </table>
+            </div>
           <PaginationControls currentPage={page} totalItems={filtered.length} onPageChange={setPage} />
         </div>
       </div>
@@ -760,7 +910,8 @@ export default function App() {
             </div>
           </div>
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <table className="min-w-full divide-y divide-slate-200">
+            <div className="overflow-x-auto">
+            <table className="min-w-[480px] w-full divide-y divide-slate-200">
               <thead className="bg-slate-50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Data</th>
@@ -786,6 +937,7 @@ export default function App() {
                 {filtered.length === 0 && <tr><td colSpan="5" className="px-6 py-8 text-center text-slate-500">Nenhum batismo.</td></tr>}
               </tbody>
             </table>
+              </div>
             <PaginationControls currentPage={page} totalItems={filtered.length} onPageChange={setPage} />
           </div>
       </div>
@@ -828,7 +980,8 @@ export default function App() {
             </div>
           </div>
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <table className="min-w-full divide-y divide-slate-200">
+            <div className="overflow-x-auto">
+            <table className="min-w-[480px] w-full divide-y divide-slate-200">
               <thead className="bg-slate-50">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase">Ano</th>
@@ -852,6 +1005,7 @@ export default function App() {
                 {filtered.length === 0 && <tr><td colSpan="4" className="px-6 py-8 text-center text-slate-500">Nenhum relatório.</td></tr>}
               </tbody>
             </table>
+              </div>
             <PaginationControls currentPage={page} totalItems={filtered.length} onPageChange={setPage} />
           </div>
       </div>
@@ -1194,40 +1348,35 @@ export default function App() {
       </div>
     );
   };
-
-  // --- MODAL DE CONFIRMAÇÃO SIMPLIFICADA (SEM SENHA) ---
   const ActionConfirmModal = () => {
     if (!actionConfirm) return null;
-
     return (
-      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200">
-          <div className="px-6 py-6 text-center">
-             <div className="mx-auto bg-amber-100 w-12 h-12 rounded-full flex items-center justify-center mb-4">
-              <ShieldAlert className="text-amber-600 h-6 w-6" />
-            </div>
-            <h3 className="text-lg font-bold text-slate-800">Confirmação de Exclusão</h3>
-            <p className="text-sm text-slate-500 mt-1 mb-6">
-              Tem certeza que deseja apagar este registro?
-            </p>
-
-            {actionConfirm.collection === 'events' && actionConfirm.data?.groupId && (
-              <div className="text-left mb-6 bg-amber-50 p-3 rounded-lg border border-amber-100">
-                <p className="text-xs font-semibold text-amber-800 mb-2 flex items-center"><Repeat className="w-3 h-3 mr-1" /> Evento Recorrente. Excluir:</p>
-                <label className="flex items-center space-x-2 text-sm text-slate-700 mb-1 cursor-pointer">
-                   <input type="radio" checked={deleteScope === 'single'} onChange={() => setDeleteScope('single')} className="text-amber-600 focus:ring-amber-600" />
-                   <span>Apenas este evento</span>
-                </label>
-                <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
-                   <input type="radio" checked={deleteScope === 'future'} onChange={() => setDeleteScope('future')} className="text-amber-600 focus:ring-amber-600" />
-                   <span>Este e todos os futuros</span>
-                </label>
+      <div className="modal-overlay">
+        <div className="modal-box max-w-sm">
+          <div className="bg-white rounded-2xl shadow-xl w-full overflow-hidden">
+            <div className="px-6 py-6 text-center">
+              <div className="mx-auto bg-amber-100 w-12 h-12 rounded-full flex items-center justify-center mb-4">
+                <ShieldAlert className="text-amber-600 h-6 w-6" />
               </div>
-            )}
-
-            <div className="flex space-x-3 mt-4">
-              <button type="button" onClick={() => setActionConfirm(null)} className="flex-1 bg-slate-100 text-slate-700 py-2 rounded-lg font-medium hover:bg-slate-200">Não, cancelar</button>
-              <button type="button" onClick={() => executeAction()} className="flex-1 bg-amber-500 text-white py-2 rounded-lg font-medium hover:bg-amber-600">Sim, excluir</button>
+              <h3 className="text-lg font-bold text-slate-800">Confirmação de Exclusão</h3>
+              <p className="text-sm text-slate-500 mt-1 mb-6">Tem certeza que deseja apagar este registro?</p>
+              {actionConfirm.collection === 'events' && actionConfirm.data?.groupId && (
+                <div className="text-left mb-6 bg-amber-50 p-3 rounded-lg border border-amber-100">
+                  <p className="text-xs font-semibold text-amber-800 mb-2 flex items-center"><Repeat className="w-3 h-3 mr-1" /> Evento Recorrente. Excluir:</p>
+                  <label className="flex items-center space-x-2 text-sm text-slate-700 mb-1 cursor-pointer">
+                    <input type="radio" checked={deleteScope === 'single'} onChange={() => setDeleteScope('single')} className="text-amber-600 focus:ring-amber-600" />
+                    <span>Apenas este evento</span>
+                  </label>
+                  <label className="flex items-center space-x-2 text-sm text-slate-700 cursor-pointer">
+                    <input type="radio" checked={deleteScope === 'future'} onChange={() => setDeleteScope('future')} className="text-amber-600 focus:ring-amber-600" />
+                    <span>Este e todos os futuros</span>
+                  </label>
+                </div>
+              )}
+              <div className="flex space-x-3 mt-4">
+                <button type="button" onClick={() => setActionConfirm(null)} className="flex-1 bg-slate-100 text-slate-700 py-2 rounded-lg font-medium hover:bg-slate-200">Não, cancelar</button>
+                <button type="button" onClick={() => executeAction()} className="flex-1 bg-amber-500 text-white py-2 rounded-lg font-medium hover:bg-amber-600">Sim, excluir</button>
+              </div>
             </div>
           </div>
         </div>
@@ -1237,13 +1386,13 @@ export default function App() {
 
   // --- MODAL DE EVENTO ---
   const EventModal = () => {
-    const [date, setDate] = useState('');
-    const [time, setTime] = useState('');
-    const [type, setType] = useState('Culto Normal');
-    const [subType, setSubType] = useState('Visita Comum');
-    const [name, setName] = useState('');
-    const [observation, setObservation] = useState('');
-    
+  const [date, setDate] = useState('');
+  const [time, setTime] = useState('');
+  const [type, setType] = useState('Culto Normal');
+  const [subType, setSubType] = useState('Visita Comum');
+  const [name, setName] = useState('');
+  const [observation, setObservation] = useState('');
+  
     // Recorrência
     const [isRecurring, setIsRecurring] = useState(false);
     const [recurrenceType, setRecurrenceType] = useState('weekly');
@@ -1319,8 +1468,9 @@ export default function App() {
     };
 
     return (
-      <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:hidden">
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden">
+      <div className="modal-overlay print:hidden">
+        <div className="modal-box max-w-lg">
+        <div className="bg-white rounded-2xl shadow-xl w-full overflow-hidden">
           <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
             <h3 className="text-lg font-bold text-slate-800">{editingData ? 'Editar Evento' : 'Novo Agendamento'}</h3>
             <button onClick={() => {setShowEventModal(false); setEditingData(null)}} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
@@ -1441,6 +1591,7 @@ export default function App() {
           </form>
         </div>
       </div>
+      </div>
     );
   };
 
@@ -1471,8 +1622,9 @@ export default function App() {
     };
 
     return (
-      <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:hidden">
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+      <div className="modal-overlay print:hidden">
+        <div className="modal-box max-w-md">
+        <div className="bg-white rounded-2xl shadow-xl w-full overflow-hidden">
           <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
              <h3 className="text-lg font-bold text-slate-800">{editingData ? 'Editar Batismo' : 'Lançar Batismo'}</h3>
              <button onClick={() => {setShowBaptismModal(false); setEditingData(null);}} className="text-slate-400"><X size={20} /></button>
@@ -1486,6 +1638,7 @@ export default function App() {
              <div className="pt-4 flex justify-end"><button type="submit" className="px-4 py-2 bg-sky-600 text-white rounded-lg font-medium">Salvar</button></div>
           </form>
         </div>
+      </div>
       </div>
     );
   };
@@ -1518,8 +1671,9 @@ export default function App() {
     };
 
     return (
-      <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:hidden">
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+      <div className="modal-overlay print:hidden">
+        <div className="modal-box max-w-md">
+        <div className="bg-white rounded-2xl shadow-xl w-full overflow-hidden">
           <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
              <h3 className="text-lg font-bold text-slate-800">{editingData ? 'Editar Santa Ceia' : 'Lançar Santa Ceia'}</h3>
              <button onClick={() => {setShowSupperModal(false); setEditingData(null);}} className="text-slate-400"><X size={20} /></button>
@@ -1536,6 +1690,7 @@ export default function App() {
              <div className="pt-4 flex justify-end"><button type="submit" className="px-4 py-2 bg-sky-600 text-white rounded-lg font-medium">Salvar</button></div>
           </form>
         </div>
+      </div>
       </div>
     );
   };
@@ -1643,8 +1798,9 @@ export default function App() {
     };
 
     return (
-      <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 print:hidden">
-        <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden">
+      <div className="modal-overlay print:hidden">
+        <div className="modal-box max-w-2xl">
+        <div className="bg-white rounded-2xl shadow-xl w-full overflow-hidden">
           <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
             <h3 className="text-lg font-bold text-slate-800 flex items-center"><Upload className="w-5 h-5 mr-2" /> Painel de Migração de Dados</h3>
             <button onClick={() => setShowMigrationPanel(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
@@ -1709,6 +1865,7 @@ export default function App() {
           </div>
         </div>
       </div>
+      </div>
     );
   };
 
@@ -1729,8 +1886,9 @@ export default function App() {
       }
     };
     return (
-      <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 print:hidden">
-        <div className="bg-white p-8 rounded-2xl w-full max-w-sm text-center">
+      <div className="modal-overlay print:hidden">
+        <div className="modal-box max-w-sm">
+        <div className="bg-white p-8 rounded-2xl w-full text-center">
           <div className="flex justify-between items-center mb-4">
              <Lock className="text-sky-600" size={32} />
              <button onClick={() => setShowLoginModal(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button>
@@ -1743,6 +1901,7 @@ export default function App() {
             <button type="submit" className="w-full bg-sky-600 text-white py-2 rounded font-medium hover:bg-sky-700">Entrar</button>
           </form>
         </div>
+      </div>
       </div>
     );
   };
@@ -1761,6 +1920,15 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {!isInstalled && installPromptEvent && (
+        <button
+          onClick={handleInstallApp}
+          className="sm:hidden fixed bottom-4 left-4 right-4 bg-emerald-600 text-white py-3 rounded-xl font-semibold shadow-lg z-40 print:hidden"
+        >
+          Instalar app
+        </button>
+      )}
 
       {showMigrationPanel && <MigrationPanel />}
       {showLoginModal && <LoginModal />}

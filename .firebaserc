@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "agendamento-de-visitas-a84fa"
-  }
+  },
+  "targets": {
+    "agendamento-de-visitas-a84fa": {
+      "hosting": {
+        "agenda-ccb": [
+          "agendamentodevisita"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
