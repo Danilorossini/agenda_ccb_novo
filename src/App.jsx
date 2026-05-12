@@ -78,14 +78,15 @@ const getWazeUrl = (address) => {
 };
 
 const getUberUrl = (address) => {
-  // Deep link do Uber para abrir o app
+  // Deep link do Uber que abre o app com destino
   const encoded = encodeURIComponent(address);
-  return `https://www.uber.com/?pickup=my_location&destination=${encoded}`;
+  return `https://www.uber.com/ul/navigate?destination=${encoded}`;
 };
 
 const get99Url = (address) => {
-  // Abre o app 99 ou a página principal se não tiver app
-  return `https://www.99app.com`;
+  // Deep link do 99 que abre o app com destino
+  const encoded = encodeURIComponent(address);
+  return `https://www.99app.com/?dest=${encoded}`;
 };
 
 const getNthDayOfMonth = (year, month, nth, weekday) => {
