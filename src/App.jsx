@@ -790,47 +790,54 @@ export default function App() {
                             </button>
                             
                             {showNavMenu && (
-                              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-lg shadow-lg overflow-y-auto max-h-64 z-50">
-                                <button
-                                  onClick={() => {
-                                    window.open(getGoogleMapsUrl(detectAddress(selectedEvent.observation)), '_blank');
-                                    setShowNavMenu(false);
-                                  }}
-                                  className="w-full text-left px-4 py-3 hover:bg-blue-50 border-b border-slate-100 flex items-center gap-2 text-slate-700 font-medium transition-colors"
-                                >
-                                  <span className="text-lg">🗺️</span>
-                                  Google Maps
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    window.open(getWazeUrl(detectAddress(selectedEvent.observation)), '_blank');
-                                    setShowNavMenu(false);
-                                  }}
-                                  className="w-full text-left px-4 py-3 hover:bg-purple-50 border-b border-slate-100 flex items-center gap-2 text-slate-700 font-medium transition-colors"
-                                >
-                                  <span className="text-lg">🛣️</span>
-                                  Waze
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    window.open(getUberUrl(detectAddress(selectedEvent.observation)), '_blank');
-                                    setShowNavMenu(false);
-                                  }}
-                                  className="w-full text-left px-4 py-3 hover:bg-black/5 border-b border-slate-100 flex items-center gap-2 text-slate-700 font-medium transition-colors"
-                                >
-                                  <span className="text-lg">🚗</span>
-                                  Uber
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    window.open(get99Url(detectAddress(selectedEvent.observation)), '_blank');
-                                    setShowNavMenu(false);
-                                  }}
-                                  className="w-full text-left px-4 py-3 hover:bg-yellow-50 flex items-center gap-2 text-slate-700 font-medium transition-colors"
-                                >
-                                  <span className="text-lg">🚕</span>
-                                  99 Táxi
-                                </button>
+                              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-lg shadow-lg z-50 p-3">
+                                {/* Primeira linha: Google Maps e Waze */}
+                                <div className="grid grid-cols-2 gap-2 mb-2">
+                                  <button
+                                    onClick={() => {
+                                      window.open(getGoogleMapsUrl(detectAddress(selectedEvent.observation)), '_blank');
+                                      setShowNavMenu(false);
+                                    }}
+                                    className="flex flex-col items-center justify-center gap-1 px-3 py-2 hover:bg-blue-50 rounded-lg text-slate-700 font-medium transition-colors border border-slate-100"
+                                  >
+                                    <span className="text-xl">🗺️</span>
+                                    <span className="text-xs text-center">Google Maps</span>
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      window.open(getWazeUrl(detectAddress(selectedEvent.observation)), '_blank');
+                                      setShowNavMenu(false);
+                                    }}
+                                    className="flex flex-col items-center justify-center gap-1 px-3 py-2 hover:bg-purple-50 rounded-lg text-slate-700 font-medium transition-colors border border-slate-100"
+                                  >
+                                    <span className="text-xl">🛣️</span>
+                                    <span className="text-xs text-center">Waze</span>
+                                  </button>
+                                </div>
+
+                                {/* Segunda linha: 99 Táxi e Uber */}
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    onClick={() => {
+                                      window.open(get99Url(detectAddress(selectedEvent.observation)), '_blank');
+                                      setShowNavMenu(false);
+                                    }}
+                                    className="flex flex-col items-center justify-center gap-1 px-3 py-2 hover:bg-yellow-50 rounded-lg text-slate-700 font-medium transition-colors border border-slate-100"
+                                  >
+                                    <span className="text-xl">🚕</span>
+                                    <span className="text-xs text-center">99 Táxi</span>
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      window.open(getUberUrl(detectAddress(selectedEvent.observation)), '_blank');
+                                      setShowNavMenu(false);
+                                    }}
+                                    className="flex flex-col items-center justify-center gap-1 px-3 py-2 hover:bg-black/5 rounded-lg text-slate-700 font-medium transition-colors border border-slate-100"
+                                  >
+                                    <span className="text-xl">🚗</span>
+                                    <span className="text-xs text-center">Uber</span>
+                                  </button>
+                                </div>
                               </div>
                             )}
                           </div>
