@@ -790,7 +790,7 @@ export default function App() {
                             </button>
                             
                             {showNavMenu && (
-                              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-lg shadow-lg z-50 p-3">
+                              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-lg shadow-lg z-50 p-2">
                                 {/* Primeira linha: Google Maps e Waze */}
                                 <div className="grid grid-cols-2 gap-2 mb-2">
                                   <button
@@ -798,20 +798,18 @@ export default function App() {
                                       window.open(getGoogleMapsUrl(detectAddress(selectedEvent.observation)), '_blank');
                                       setShowNavMenu(false);
                                     }}
-                                    className="flex flex-col items-center justify-center gap-1 px-3 py-2 hover:bg-blue-50 rounded-lg text-slate-700 font-medium transition-colors border border-slate-100"
+                                    className="px-2 py-2 hover:bg-blue-50 rounded text-slate-700 text-sm font-medium transition-colors border border-slate-100"
                                   >
-                                    <span className="text-xl">🗺️</span>
-                                    <span className="text-xs text-center">Google Maps</span>
+                                    Google Maps
                                   </button>
                                   <button
                                     onClick={() => {
                                       window.open(getWazeUrl(detectAddress(selectedEvent.observation)), '_blank');
                                       setShowNavMenu(false);
                                     }}
-                                    className="flex flex-col items-center justify-center gap-1 px-3 py-2 hover:bg-purple-50 rounded-lg text-slate-700 font-medium transition-colors border border-slate-100"
+                                    className="px-2 py-2 hover:bg-purple-50 rounded text-slate-700 text-sm font-medium transition-colors border border-slate-100"
                                   >
-                                    <span className="text-xl">🛣️</span>
-                                    <span className="text-xs text-center">Waze</span>
+                                    Waze
                                   </button>
                                 </div>
 
@@ -822,20 +820,18 @@ export default function App() {
                                       window.open(get99Url(detectAddress(selectedEvent.observation)), '_blank');
                                       setShowNavMenu(false);
                                     }}
-                                    className="flex flex-col items-center justify-center gap-1 px-3 py-2 hover:bg-yellow-50 rounded-lg text-slate-700 font-medium transition-colors border border-slate-100"
+                                    className="px-2 py-2 hover:bg-yellow-50 rounded text-slate-700 text-sm font-medium transition-colors border border-slate-100"
                                   >
-                                    <span className="text-xl">🚕</span>
-                                    <span className="text-xs text-center">99 Táxi</span>
+                                    99 Táxi
                                   </button>
                                   <button
                                     onClick={() => {
                                       window.open(getUberUrl(detectAddress(selectedEvent.observation)), '_blank');
                                       setShowNavMenu(false);
                                     }}
-                                    className="flex flex-col items-center justify-center gap-1 px-3 py-2 hover:bg-black/5 rounded-lg text-slate-700 font-medium transition-colors border border-slate-100"
+                                    className="px-2 py-2 hover:bg-black/5 rounded text-slate-700 text-sm font-medium transition-colors border border-slate-100"
                                   >
-                                    <span className="text-xl">🚗</span>
-                                    <span className="text-xs text-center">Uber</span>
+                                    Uber
                                   </button>
                                 </div>
                               </div>
