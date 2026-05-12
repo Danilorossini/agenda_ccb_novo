@@ -2,7 +2,8 @@
 import { 
   Calendar as CalendarIcon, PieChart as PieChartIcon, Users, Droplets, 
   Lock, LogOut, Plus, BookOpen, X, ChevronLeft, ChevronRight, CheckCircle2,
-  Clock, Info, Edit, Trash2, ShieldAlert, Repeat, Printer, LockOpen, Settings, Upload
+  Clock, Info, Edit, Trash2, ShieldAlert, Repeat, Printer, LockOpen, Settings, Upload,
+  MapPin, Navigation, ChevronDown
 } from 'lucide-react';
 import { 
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer, 
@@ -44,6 +45,47 @@ const TYPE_STYLES = {
 const getEventStyle = (type, subType) => {
   const key = type === 'Visita' ? subType : type;
   return TYPE_STYLES[key] || TYPE_STYLES['Default'];
+};
+
+// --- FUNÇÕES DE DETECÇÃO E NAVEGAÇÃO ---
+const detectAddress = (text) => {
+  if (!text) return null;
+  // Padrões comuns de endereço em português
+  // Rua/Avenida/Travessa + Nome + Número (opcional) + Cidade
+  const patterns = [
+    /(?:Rua|Av\.|Avenida|Trav\.|Travessa|Praça|Pça\.?|Alameda|Ladeira|Passagem|Estrada|Caminho|Beco|Poço|Logradouro)\s+[A-Z][^,\n]+(,?\s*nº?\s*\d+)?[^,\n]*/gi,
+    /\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,?\s*(?:Lapa|Centro|Irajá|Vila|Zona|Bairro)/gi
+  ];
+  
+  for (let pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) return match[0].trim();
+  }
+  
+  // Se não encontrou padrão específico, tenta extrair linhas que parecem endereços
+  const lines = text.split('\n').filter(l => l.trim().length > 10);
+  return lines.find(l => /[0-9]|Rua|Avenida|Travessa|Praça/i.test(l))?.trim() || null;
+};
+
+const getGoogleMapsUrl = (address) => {
+  const encoded = encodeURIComponent(address);
+  return `https://www.google.com/maps/search/${encoded}`;
+};
+
+const getWazeUrl = (address) => {
+  const encoded = encodeURIComponent(address);
+  return `https://waze.com/ul?q=${encoded}`;
+};
+
+const getUberUrl = (address) => {
+  const encoded = encodeURIComponent(address);
+  return `https://m.uber.com/?action=setPickupLocation&pickup=my_location&dropoff=${encoded}`;
+};
+
+const get99Url = (address) => {
+  // 99 usa um padrão específico de deep link
+  const encoded = encodeURIComponent(address);
+  return `https://deep.99app.com/ride?destination=${encoded}`;
 };
 
 const getNthDayOfMonth = (year, month, nth, weekday) => {
@@ -372,9 +414,10 @@ export default function App() {
     const [obsPassInput, setObsPassInput] = useState('');
     const [isObsUnlocked, setIsObsUnlocked] = useState(false);
     const [obsError, setObsError] = useState(false);
+    const [showNavMenu, setShowNavMenu] = useState(false);
 
     useEffect(() => {
-      setObsPassInput(''); setIsObsUnlocked(false); setObsError(false);
+      setObsPassInput(''); setIsObsUnlocked(false); setObsError(false); setShowNavMenu(false);
     }, [selectedEvent]);
 
     const handleUnlockObs = () => {
@@ -729,8 +772,69 @@ export default function App() {
                     </h4>
                     
                     {isObsUnlocked ? (
-                      <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 text-sm text-amber-900 whitespace-pre-wrap">
-                        {selectedEvent.observation}
+                      <div className="space-y-3">
+                        <div className="bg-amber-50 p-3 rounded-lg border border-amber-200 text-sm text-amber-900 whitespace-pre-wrap">
+                          {selectedEvent.observation}
+                        </div>
+                        
+                        {/* Menu de Navegação - Detecta endereço automaticamente */}
+                        {detectAddress(selectedEvent.observation) && (
+                          <div className="relative">
+                            <button 
+                              onClick={() => setShowNavMenu(!showNavMenu)}
+                              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-cyan-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:from-blue-700 hover:to-cyan-700 shadow-md transition-all"
+                            >
+                              <MapPin className="w-4 h-4" />
+                              Ir para o local
+                              <ChevronDown className={`w-4 h-4 transition-transform ${showNavMenu ? 'rotate-180' : ''}`} />
+                            </button>
+                            
+                            {showNavMenu && (
+                              <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-slate-200 rounded-lg shadow-lg overflow-y-auto max-h-64 z-50">
+                                <button
+                                  onClick={() => {
+                                    window.open(getGoogleMapsUrl(detectAddress(selectedEvent.observation)), '_blank');
+                                    setShowNavMenu(false);
+                                  }}
+                                  className="w-full text-left px-4 py-3 hover:bg-blue-50 border-b border-slate-100 flex items-center gap-2 text-slate-700 font-medium transition-colors"
+                                >
+                                  <span className="text-lg">🗺️</span>
+                                  Google Maps
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    window.open(getWazeUrl(detectAddress(selectedEvent.observation)), '_blank');
+                                    setShowNavMenu(false);
+                                  }}
+                                  className="w-full text-left px-4 py-3 hover:bg-purple-50 border-b border-slate-100 flex items-center gap-2 text-slate-700 font-medium transition-colors"
+                                >
+                                  <span className="text-lg">🛣️</span>
+                                  Waze
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    window.open(getUberUrl(detectAddress(selectedEvent.observation)), '_blank');
+                                    setShowNavMenu(false);
+                                  }}
+                                  className="w-full text-left px-4 py-3 hover:bg-black/5 border-b border-slate-100 flex items-center gap-2 text-slate-700 font-medium transition-colors"
+                                >
+                                  <span className="text-lg">🚗</span>
+                                  Uber
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    window.open(get99Url(detectAddress(selectedEvent.observation)), '_blank');
+                                    setShowNavMenu(false);
+                                  }}
+                                  className="w-full text-left px-4 py-3 hover:bg-yellow-50 flex items-center gap-2 text-slate-700 font-medium transition-colors"
+                                >
+                                  <span className="text-lg">🚕</span>
+                                  99 Táxi
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="flex flex-col space-y-2">
